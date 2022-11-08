@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import base64
 import os
 import subprocess
@@ -12,13 +11,6 @@ from typing import Optional
 import grpc
 import pandas as pd
 from google.protobuf.json_format import MessageToDict
-
-# if Path("sf/substreams").exists():
-#     from sf.substreams.v1.package_pb2 import Package
-#     from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
-#     from sf.substreams.v1.substreams_pb2_grpc import StreamStub
-# else:
-#     raise ModuleNotFoundError("Need to generate sf/substreams/ directory first!")
 
 DEFAULT_ENDPOINT = "api.streamingfast.io:443"
 
@@ -37,7 +29,7 @@ class Substream:
         if not Path(spkg_path).exists() or not spkg_path.endswith(".spkg"):
             raise Exception("Must provide a valid .spkg file!")
         if not Path("sf/substreams").exists() or regenerate:
-            # generate spkg
+            # generate sf/ directory
             command = f"""
             alias protogen_py="python3 -m grpc_tools.protoc --descriptor_set_in={spkg_path} --python_out=. --grpc_python_out=.";
             protogen_py sf/substreams/v1/substreams.proto;
