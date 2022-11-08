@@ -2,7 +2,7 @@
 WIP Python Interface for querying via substreams
 
 ## Requirements
-1. Install what is required to build protobufs:
+1. Install what is required to build protobufs and this package:
 
 ```curl
 # Use in any python virtual environment you see fit
@@ -10,6 +10,7 @@ python3 -m venv env
 source env/bin/activate
 
 pip3 install grpcio-tools protobuf==3.20.1
+pip3 install git+ssh://git@github.com/messari/substreams-python
 
 # important note, 3.20.1 works newer updated protobuf seem to cause issues -> https://github.com/protocolbuffers/protobuf/issues/10571
 ```
@@ -23,6 +24,7 @@ pip3 install grpcio-tools protobuf==3.20.1
 3. Retrieve the relevant `.spkg` file
     - Can retrieve officially released `.spkg` files from the instructions [here](https://github.com/streamingfast/substreams-playground/releases)
         - Alternatively, can refer to the official StreamingFast [README](https://github.com/streamingfast/substreams-playground/tree/master/consumers/python) or generate a Messari `.spkg` from these [build instructions](https://github.com/messari/substreams/tree/master/uniswap-v2)
+
 
 ## Instructions
 
