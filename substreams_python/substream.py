@@ -26,6 +26,9 @@ class Substream:
     def __init__(
         self, spkg_path: str, token: Optional[str] = None, regenerate: bool = False
     ):
+        self.token: Optional[str] = os.getenv("SUBSTREAMS_API_TOKEN", None) or token
+        if not self.token:
+            raise Exception("Must set SUBSTREAMS_API_TOKEN")
         if not Path(spkg_path).exists() or not spkg_path.endswith(".spkg"):
             raise Exception("Must provide a valid .spkg file!")
         if not Path("sf/substreams").exists() or regenerate:
@@ -47,9 +50,6 @@ class Substream:
         with open(spkg_path, "rb") as f:
             self.pkg = Package()
             self.pkg.ParseFromString(f.read())
-        self.token: Optional[str] = os.getenv("SUBSTREAMS_API_TOKEN") or token
-        if not self.token:
-            raise Exception("set SUBSTREAMS_API_TOKEN")
 
         credentials = grpc.composite_channel_credentials(
             grpc.ssl_channel_credentials(),
