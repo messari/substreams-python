@@ -24,7 +24,7 @@ pip3 install git+ssh://git@github.com/messari/substreams-python
 ### Instantiation
 First import the `Substream` object and pass in the path to your `.spkg` file
 ```python
-from substream_python import Substream
+from substreams_python import Substream
 
 sb = Substream("substreams-uniswap-v2-v0.1.0.spkg")
 ```
