@@ -2,17 +2,10 @@
 WIP Python Interface for querying via substreams
 
 ## Requirements
-1. Install what is required to build protobufs and this package:
+1. Install the package:
 
 ```curl
-# Use in any python virtual environment you see fit
-python3 -m venv env
-source env/bin/activate
-
-pip3 install grpcio-tools protobuf==3.20.1
 pip3 install git+ssh://git@github.com/messari/substreams-python
-
-# important note, 3.20.1 works newer updated protobuf seem to cause issues -> https://github.com/protocolbuffers/protobuf/issues/10571
 ```
 2. Generate a StreamingFast API Token
     - Can do so via this [link](https://substreams.streamingfast.io/reference-and-specs/authentication)
