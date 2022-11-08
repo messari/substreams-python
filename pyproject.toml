@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "substreams-python"
+version = "0.0.1"
+authors = [
+  { name="Ryan Sudhakaran", email="ryan.sudhakaran@messari.io" },
+]
+description = "WIP Substreams Python Adapter"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
