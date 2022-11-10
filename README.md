@@ -36,7 +36,7 @@ In order to poll the substream, you will need to call the `poll()` function on t
 
 ```python
 # View available modules on .spkg
-print(sb.supported_output_modules)
+print(sb.output_modules)
 
 # Poll the module and return a list of SubstreamOutput objects in the order of teh specified modules
 result = sb.poll(["store_swap_events"], start_block=10000835, end_block=10000835+20000)

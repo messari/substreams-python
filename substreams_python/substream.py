@@ -6,13 +6,30 @@ from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import grpc
 import pandas as pd
+from google.protobuf.descriptor_pb2 import DescriptorProto
 from google.protobuf.json_format import MessageToDict
 
 DEFAULT_ENDPOINT = "api.streamingfast.io:443"
+
+
+def retrieve_class(module_name: str, class_name: str):
+    module = __import__(module_name)
+    return getattr(module, class_name)
+
+
+def generate_pb2_files(spkg_path: str, commands: str) -> None:
+    command = f"""
+    alias protogen_py="python3 -m grpc_tools.protoc --descriptor_set_in={spkg_path} --python_out=. --grpc_python_out=.";
+    {commands}
+    unalias protogen_py;
+    """
+    subprocess.run(
+        command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+    )
 
 
 @dataclass
@@ -33,16 +50,13 @@ class Substream:
             raise Exception("Must provide a valid .spkg file!")
         if not Path("sf/substreams").exists() or regenerate:
             # generate sf/ directory
-            command = f"""
-            alias protogen_py="python3 -m grpc_tools.protoc --descriptor_set_in={spkg_path} --python_out=. --grpc_python_out=.";
+            commands = """
             protogen_py sf/substreams/v1/substreams.proto;
             protogen_py sf/substreams/v1/package.proto;
             protogen_py sf/substreams/v1/modules.proto;
             protogen_py sf/substreams/v1/clock.proto;
             """
-            subprocess.run(
-                command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-            )
+            generate_pb2_files(spkg_path, commands)
 
         from sf.substreams.v1.package_pb2 import Package
         from sf.substreams.v1.substreams_pb2_grpc import StreamStub
@@ -50,6 +64,15 @@ class Substream:
         with open(spkg_path, "rb") as f:
             self.pkg = Package()
             self.pkg.ParseFromString(f.read())
+
+        custom_proto_files: str = "".join(
+            [
+                f"protogen_py {file};"
+                for file in self.proto_file_map.values()
+                if not file.startswith("sf/") and not file.startswith("google/")
+            ]
+        )
+        generate_pb2_files(spkg_path, custom_proto_files)
 
         credentials = grpc.composite_channel_credentials(
             grpc.ssl_channel_credentials(),
@@ -76,15 +99,36 @@ class Substream:
         return deltas
 
     @cached_property
-    def supported_output_modules(self) -> list[str]:
-        return [f.name for f in self.pkg.modules.ListFields()[0][1]]
+    def output_modules(self) -> dict[str, Any]:
+        module_map = {}
+        for module in self.pkg.modules.ListFields()[0][1]:
+            map_output_type = module.kind_map.output_type
+            store_output_type = module.kind_store.value_type
+            if map_output_type != "":
+                output_type = map_output_type
+            else:
+                output_type = store_output_type
+            module_map[module.name] = {
+                "output_type": output_type,
+                "initial_block": module.initial_block,
+            }
+        return module_map
+
+    @cached_property
+    def proto_file_map(self) -> dict[str, DescriptorProto]:
+        name_map = {}
+        for pf in self.pkg.proto_files:
+            for mt in pf.message_type:
+                name_map[mt.name] = pf.name
+        return name_map
 
     # TODO how do I type annotate this stuff?
     def poll(self, output_modules: list[str], start_block: int, end_block: int):
+        # TODO make this general
         from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
 
         for module in output_modules:
-            if module not in self.supported_output_modules:
+            if module not in self.output_modules:
                 raise Exception(f"module '{module}' is not supported for {self.name}")
 
         stream = self.service.Blocks(
@@ -114,6 +158,18 @@ class Substream:
         for output_module in output_modules:
             result = SubstreamOutput(module_name=output_module)
             data_dict: dict = raw_results.get(output_module)
+
+            # Retrieve out put type and import from module
+            raw_output_type: str = self.output_modules.get(output_module)["output_type"]
+            if raw_output_type.startswith("proto:"):
+                output_type = raw_output_type.split(".")[-1]
+            else:
+                output_type = raw_output_type
+
+            raw_module_path: str = self.proto_file_map.get(output_type)
+            module_path: str = raw_module_path.split("/")[-1].split(".proto")[0]
+            pb2_path: str = f"{module_path}_pb2"
+            obj_class = retrieve_class(pb2_path, output_type)
             for k, v in data_dict.items():
                 df = pd.DataFrame(v)
                 df["output_module"] = output_module
@@ -122,11 +178,15 @@ class Substream:
                 )
                 if "new_value" in df:
                     df["new_value"] = df["new_value"].apply(
-                        lambda x: base64.b64decode(x) if type(x) is not float else x
+                        lambda x: obj_class().ParseFromString(base64.b64decode(x))
+                        if type(x) is not float
+                        else x
                     )
                 if "old_value" in df:
                     df["old_value"] = df["old_value"].apply(
-                        lambda x: base64.b64decode(x) if type(x) is not float else x
+                        lambda x: obj_class().ParseFromString(base64.b64decode(x))
+                        if type(x) is not float
+                        else x
                     )
                 setattr(result, k, df)
             results.append(result)
