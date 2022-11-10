@@ -84,18 +84,46 @@ class Substream:
         self.version = package_meta.version
         self.name = package_meta.name
 
+    def _class_from_module(self, module_name: str):
+        # Retrieve out put type and import from module
+        raw_output_type: str = self.output_modules.get(module_name)["output_type"]
+        if raw_output_type.startswith("proto:"):
+            output_type = raw_output_type.split(".")[-1]
+        else:
+            output_type = raw_output_type
+
+        raw_module_path: str = self.proto_file_map.get(output_type)
+        module_path: str = raw_module_path.split("/")[-1].split(".proto")[0]
+        pb2_path: str = f"{module_path}_pb2"
+        return retrieve_class(pb2_path, output_type)
+
+    def _parse_from_string(self, raw: str, output_class) -> dict:
+        decoded: bytes = base64.b64decode(raw)
+        obj = output_class()
+        obj.ParseFromString(decoded)
+        return MessageToDict(obj)
+
     def _parse_snapshot_deltas(self, snapshot: dict) -> list[dict]:
-        return snapshot["deltas"].get("deltas", list())
+        module_name: str = snapshot["moduleName"]
+        obj_class = self._class_from_module(module_name)
+        return [
+            self._parse_from_string(x["newValue"], obj_class)
+            for x in snapshot["deltas"].get("deltas", list())
+        ]
 
     def _parse_data_deltas(self, data: dict) -> list[dict]:
+        module_name: str = data["outputs"][0]["name"]
+        obj_class = self._class_from_module(module_name)
         deltas = list()
         for output in data["outputs"]:
             store_deltas = output["storeDeltas"]
             if store_deltas:
                 raw_deltas = store_deltas["deltas"]
                 for delta in raw_deltas:
-                    delta.update(data["clock"])
-                    deltas.append(delta)
+                    raw = delta["newValue"]
+                    d = self._parse_from_string(raw, obj_class)
+                    d.update(data["clock"])
+                    deltas.append(d)
         return deltas
 
     @cached_property
@@ -158,36 +186,9 @@ class Substream:
         for output_module in output_modules:
             result = SubstreamOutput(module_name=output_module)
             data_dict: dict = raw_results.get(output_module)
-
-            # Retrieve out put type and import from module
-            raw_output_type: str = self.output_modules.get(output_module)["output_type"]
-            if raw_output_type.startswith("proto:"):
-                output_type = raw_output_type.split(".")[-1]
-            else:
-                output_type = raw_output_type
-
-            raw_module_path: str = self.proto_file_map.get(output_type)
-            module_path: str = raw_module_path.split("/")[-1].split(".proto")[0]
-            pb2_path: str = f"{module_path}_pb2"
-            obj_class = retrieve_class(pb2_path, output_type)
             for k, v in data_dict.items():
                 df = pd.DataFrame(v)
                 df["output_module"] = output_module
-                df = df.rename(
-                    columns={"newValue": "new_value", "oldValue": "old_value"}
-                )
-                if "new_value" in df:
-                    df["new_value"] = df["new_value"].apply(
-                        lambda x: obj_class().ParseFromString(base64.b64decode(x))
-                        if type(x) is not float
-                        else x
-                    )
-                if "old_value" in df:
-                    df["old_value"] = df["old_value"].apply(
-                        lambda x: obj_class().ParseFromString(base64.b64decode(x))
-                        if type(x) is not float
-                        else x
-                    )
                 setattr(result, k, df)
             results.append(result)
         return results
