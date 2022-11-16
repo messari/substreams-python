@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "substreams-python"
+name = "substreams"
 version = "0.0.1"
 authors = [
   { name="Ryan Sudhakaran", email="ryan.sudhakaran@messari.io" },

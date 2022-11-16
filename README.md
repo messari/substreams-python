@@ -5,7 +5,7 @@ WIP Python Interface for querying via substreams
 1. Install the package:
 
 ```curl
-pip3 install git+ssh://git@github.com/messari/substreams-python
+pip3 install substreams
 ```
 2. Generate a StreamingFast API Token
     - Can do so via this [link](https://substreams.streamingfast.io/reference-and-specs/authentication)
@@ -24,7 +24,7 @@ pip3 install git+ssh://git@github.com/messari/substreams-python
 ### Instantiation
 First import the `Substream` object and pass in the path to your `.spkg` file
 ```python
-from substreams_python import Substream
+from substreams import Substream
 
 sb = Substream("substreams-uniswap-v2-v0.1.0.spkg")
 ```
