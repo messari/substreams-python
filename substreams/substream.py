@@ -138,6 +138,18 @@ class Substream:
                     deltas.append(d)
         return deltas
 
+    def _parse_data_outputs(self, data: dict) -> list[dict]:
+        module_name: str = data["outputs"][0]["name"]
+        obj_class = self._class_from_module(module_name)
+        outputs = list()
+        for output in data["outputs"]:
+            map_output = output["mapOutput"]
+            for key, items in map_output.items():
+                if key == "items":
+                    for item in items:
+                        outputs.append(item)
+        return outputs
+
     @cached_property
     def output_modules(self) -> dict[str, Any]:
         module_map = {}
@@ -148,7 +160,9 @@ class Substream:
                 output_type = map_output_type
             else:
                 output_type = store_output_type
+
             module_map[module.name] = {
+                "is_map": map_output_type != "",
                 "output_type": output_type,
                 "initial_block": module.initial_block,
             }
@@ -163,13 +177,15 @@ class Substream:
         return name_map
 
     # TODO how do I type annotate this stuff?
-    def poll(self, output_modules: list[str], start_block: int, end_block: int):
+    def poll(self, output_modules: list[str], start_block: int, end_block: int, initial_snapshot = False):
         # TODO make this general
         from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
 
         for module in output_modules:
             if module not in self.output_modules:
                 raise Exception(f"module '{module}' is not supported for {self.name}")
+            self._class_from_module(module)
+
         stream = self.service.Blocks(
             Request(
                 start_block_num=start_block,
@@ -177,7 +193,7 @@ class Substream:
                 fork_steps=[STEP_IRREVERSIBLE],
                 modules=self.pkg.modules,
                 output_modules=output_modules,
-                initial_store_snapshot_for_modules=output_modules,
+                initial_store_snapshot_for_modules=output_modules if initial_snapshot else None,
             )
         )
         raw_results = defaultdict(lambda: {"data": list(), "snapshots": list()})
@@ -190,10 +206,15 @@ class Substream:
                 raw_results[module_name]["snapshots"].extend(snapshot_deltas)
             if data:
                 print('data block #', data["clock"]["number"])
-                module_name: str = data["outputs"][0]["name"]
-                data_deltas = self._parse_data_deltas(data)
-                raw_results[module_name]["data"].extend(data_deltas)
-        print('FINISH STREAM')
+                if self.output_modules[module]["is_map"]:
+                    module_name: str = data["outputs"][0]["name"]
+                    data_outputs = self._parse_data_outputs(data)
+                    raw_results[module_name]["data"].extend(data_outputs)
+                else:
+                    module_name: str = data["outputs"][0]["name"]
+                    data_deltas = self._parse_data_deltas(data)
+                    raw_results[module_name]["data"].extend(data_deltas)
+
         results = []
         for output_module in output_modules:
             result = SubstreamOutput(module_name=output_module)
