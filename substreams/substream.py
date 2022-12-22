@@ -12,12 +12,13 @@ import grpc
 import pandas as pd
 from google.protobuf.descriptor_pb2 import DescriptorProto
 from google.protobuf.json_format import MessageToDict
+from importlib import import_module
 
 DEFAULT_ENDPOINT = "api.streamingfast.io:443"
 
 
 def retrieve_class(module_name: str, class_name: str):
-    module = __import__(module_name)
+    module = import_module(module_name)
     return getattr(module, class_name)
 
 
@@ -95,8 +96,7 @@ class Substream:
         raw_module_path: str = self.proto_file_map.get(output_type)
         if raw_module_path is None:
             return None
-        module_path: str = raw_module_path.split("/")[-1].split(".proto")[0]
-        pb2_path: str = f"{module_path}_pb2"
+        pb2_path: str = raw_module_path.replace('.proto', '_pb2').replace('/', '.')
         return retrieve_class(pb2_path, output_type)
 
     def _parse_from_string(self, raw: str, key: str, output_class) -> dict:
