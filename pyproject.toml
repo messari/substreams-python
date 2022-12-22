@@ -7,7 +7,7 @@ name = "substreams"
 version = "0.0.3"
 authors = [
   { name="Ryan Sudhakaran", email="ryan.sudhakaran@messari.io" },
-  { name="Michael Carroll", email="michaelcarroll1999@gmail.com}
+  { name="Michael Carroll", email="michaelcarroll1999@gmail.com" }
 ]
 description = "WIP Substreams Python Adapter"
 readme = "README.md"

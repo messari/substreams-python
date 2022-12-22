@@ -139,8 +139,6 @@ class Substream:
         return deltas
 
     def _parse_data_outputs(self, data: dict) -> list[dict]:
-        module_name: str = data["outputs"][0]["name"]
-        obj_class = self._class_from_module(module_name)
         outputs = list()
         for output in data["outputs"]:
             map_output = output["mapOutput"]
@@ -177,7 +175,13 @@ class Substream:
         return name_map
 
     # TODO how do I type annotate this stuff?
-    def poll(self, output_modules: list[str], start_block: int, end_block: int, initial_snapshot = False):
+    def poll(
+        self,
+        output_modules: list[str],
+        start_block: int,
+        end_block: int,
+        initial_snapshot=False,
+    ):
         # TODO make this general
         from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
 
@@ -193,7 +197,9 @@ class Substream:
                 fork_steps=[STEP_IRREVERSIBLE],
                 modules=self.pkg.modules,
                 output_modules=output_modules,
-                initial_store_snapshot_for_modules=output_modules if initial_snapshot else None,
+                initial_store_snapshot_for_modules=output_modules
+                if initial_snapshot
+                else None,
             )
         )
         raw_results = defaultdict(lambda: {"data": list(), "snapshots": list()})
@@ -205,15 +211,13 @@ class Substream:
                 snapshot_deltas = self._parse_snapshot_deltas(snapshot)
                 raw_results[module_name]["snapshots"].extend(snapshot_deltas)
             if data:
-                print('data block #', data["clock"]["number"])
+                print("data block #", data["clock"]["number"])
                 if self.output_modules[module]["is_map"]:
-                    module_name: str = data["outputs"][0]["name"]
-                    data_outputs = self._parse_data_outputs(data)
-                    raw_results[module_name]["data"].extend(data_outputs)
+                    parsed = self._parse_data_outputs(data)
                 else:
-                    module_name: str = data["outputs"][0]["name"]
-                    data_deltas = self._parse_data_deltas(data)
-                    raw_results[module_name]["data"].extend(data_deltas)
+                    parsed = self._parse_data_deltas(data)
+                module_name: str = data["outputs"][0]["name"]
+                raw_results[module_name]["data"].extend(parsed)
 
         results = []
         for output_module in output_modules:
