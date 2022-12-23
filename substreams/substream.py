@@ -202,31 +202,34 @@ class Substream:
             )
         )
         raw_results = defaultdict(lambda: {"data": list(), "snapshots": list()})
-        for response in stream:
-            snapshot = MessageToDict(response.snapshot_data)
-            data = MessageToDict(response.data)
-            if snapshot:
-                module_name: str = snapshot["moduleName"]
-                snapshot_deltas = self._parse_snapshot_deltas(snapshot)
-                raw_results[module_name]["snapshots"].extend(snapshot_deltas)
-            if data:
-                print("data block #", data["clock"]["number"])
-                if self.output_modules[module]["is_map"]:
-                    parsed = self._parse_data_outputs(data)
-                else:
-                    parsed = self._parse_data_deltas(data)
-                module_name: str = data["outputs"][0]["name"]
-                raw_results[module_name]["data"].extend(parsed)
-        print('FINISH STREAM')
         results = []
-        for output_module in output_modules:
-            result = SubstreamOutput(module_name=output_module)
-            data_dict: dict = raw_results.get(output_module)
-            for k, v in data_dict.items():
-                df = pd.DataFrame(v)
-                df["output_module"] = output_module
-                setattr(result, k, df)
-            results.append(result)
+        try:
+            for response in stream:
+                snapshot = MessageToDict(response.snapshot_data)
+                data = MessageToDict(response.data)
+                if snapshot:
+                    module_name: str = snapshot["moduleName"]
+                    snapshot_deltas = self._parse_snapshot_deltas(snapshot)
+                    raw_results[module_name]["snapshots"].extend(snapshot_deltas)
+                if data:
+                    print("data block #", data["clock"]["number"])
+                    if self.output_modules[module]["is_map"]:
+                        parsed = self._parse_data_outputs(data)
+                    else:
+                        parsed = self._parse_data_deltas(data)
+                    module_name: str = data["outputs"][0]["name"]
+                    raw_results[module_name]["data"].extend(parsed)
+            print('FINISH STREAM')
+            for output_module in output_modules:
+                result = SubstreamOutput(module_name=output_module)
+                data_dict: dict = raw_results.get(output_module)
+                for k, v in data_dict.items():
+                    df = pd.DataFrame(v)
+                    df["output_module"] = output_module
+                    setattr(result, k, df)
+                results.append(result)
+        except Exception as e:
+            results.append({"error": e})
         return results
 
     # This method executes a function passed as a parameter on every block data has been streamed
