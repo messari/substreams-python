@@ -173,14 +173,16 @@ class Substream:
                 name_map[mt.name] = pf.name
         return name_map
 
-    # This method indexes all blocks from start_block until end_block
-    # Returns one single dataframe with all data in rows once all blocks have been indexed
     def poll(
         self,
         output_modules: list[str],
         start_block: int,
         end_block: int,
+        stream_callback=None,
+        return_first_result=False,
         initial_snapshot=False,
+        highest_processed_block: int = 0,
+        return_progress=False
     ):
         from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
 
@@ -203,137 +205,77 @@ class Substream:
         )
         raw_results = defaultdict(lambda: {"data": list(), "snapshots": list()})
         results = []
-        try:
-            for response in stream:
-                snapshot = MessageToDict(response.snapshot_data)
-                data = MessageToDict(response.data)
-                if snapshot:
-                    module_name: str = snapshot["moduleName"]
-                    snapshot_deltas = self._parse_snapshot_deltas(snapshot)
-                    raw_results[module_name]["snapshots"].extend(snapshot_deltas)
-                if data:
-                    print("data block #", data["clock"]["number"])
-                    if self.output_modules[module]["is_map"]:
-                        parsed = self._parse_data_outputs(data)
-                    else:
-                        parsed = self._parse_data_deltas(data)
-                    module_name: str = data["outputs"][0]["name"]
-                    raw_results[module_name]["data"].extend(parsed)
-            print('FINISH STREAM')
-            for output_module in output_modules:
-                result = SubstreamOutput(module_name=output_module)
-                data_dict: dict = raw_results.get(output_module)
-                for k, v in data_dict.items():
-                    df = pd.DataFrame(v)
-                    df["output_module"] = output_module
-                    setattr(result, k, df)
-                results.append(result)
-        except Exception as e:
-            results.append({"error": e})
-        return results
-
-    # This method executes a function passed as a parameter on every block data has been streamed
-    def poll_callback_on_data(
-        self,
-        output_modules: list[str],
-        start_block: int,
-        end_block: int,
-        stream_callback,
-        initial_snapshot=False,
-    ):
-        # TODO make this general
-        from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
-
-        for module in output_modules:
-            if module not in self.output_modules:
-                raise Exception(f"module '{module}' is not supported for {self.name}")
-            self._class_from_module(module)
-
-        stream = self.service.Blocks(
-            Request(
-                start_block_num=start_block,
-                stop_block_num=end_block,
-                fork_steps=[STEP_IRREVERSIBLE],
-                modules=self.pkg.modules,
-                output_modules=output_modules,
-                initial_store_snapshot_for_modules=output_modules
-                if initial_snapshot
-                else None,
-            )
-        )
-        raw_results = defaultdict(lambda: {"data": list(), "snapshots": list()})
-        for response in stream:
-            data = MessageToDict(response.data)
-            if data:
-                module_name: str = data["outputs"][0]["name"]
-                if self.output_modules[module]["is_map"]:
-                    parsed = self._parse_data_outputs(data)
-                else:
-                    parsed = self._parse_data_deltas(data)
-                if len(parsed) > 0:
-                    print('data block #', data["clock"]["number"])
-                    stream_callback(module_name, parsed)
-        print('FINISH STREAM')
-        return
-
-    # This method indexes all blocks until the first block that data is received
-    # Ideal for live streaming events and receiveing them on the front end   
-    def poll_return_first_dict(
-        self,
-        output_modules: list[str],
-        start_block: int,
-        end_block: int,
-        highest_processed_block: int = 0,
-        initial_snapshot=False,
-        return_progress=False
-    ):
-        from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
-
-        for module in output_modules:
-            if module not in self.output_modules:
-                raise Exception(f"module '{module}' is not supported for {self.name}")
-            self._class_from_module(module)
-
-        # initial_store_snapshot_for_modules could possibly import the starting snapshot to start indexing at chain head?
-        stream = self.service.Blocks(
-            Request(
-                start_block_num=start_block,
-                stop_block_num=end_block,
-                fork_steps=[STEP_IRREVERSIBLE],
-                modules=self.pkg.modules,
-                output_modules=output_modules,
-                initial_store_snapshot_for_modules=output_modules
-                if initial_snapshot
-                else None,
-            )
-        )
-        module_name = ""
-        parsed = None
-        data_block = 0
-        
-        print(stream.time_remaining(), start_block, end_block, highest_processed_block)
-        try:
-            for response in stream:
-                data = MessageToDict(response.data)
-                progress = MessageToDict(response.progress)
-                if data:
-                    data_block = data["clock"]["number"]
-                    module_name: str = data["outputs"][0]["name"]
-                    if self.output_modules[module]["is_map"]:
-                        parsed = self._parse_data_outputs(data)
-                    else:
-                        parsed = self._parse_data_deltas(data)
-                    module_name: str = data["outputs"][0]["name"]
-                    if len(parsed) > 0:
-                        print('data block #', data["clock"]["number"])
-                        break
-                elif progress and return_progress is True:
-                    endBlock = int(progress["modules"][0]['processedRanges']['processedRanges'][0]['endBlock'])
-                    data_block = endBlock
-                    if endBlock > highest_processed_block + 100 and progress["modules"][0]['name'] == output_modules[0]:
-                        print(data_block, 'datablock')
-                        return {"block": int(endBlock)}
-            print('FINISH STREAM')
-            return {"data": parsed, "module_name": module_name, "data_block": data_block}
-        except Exception as e:
-            return {"error": e}
+        if callable(stream_callback):
+            # This logic executes a function passed as a parameter on every block data has been streamed
+            try: 
+                for response in stream:
+                    data = MessageToDict(response.data)
+                    if data:
+                        module_name: str = data["outputs"][0]["name"]
+                        if self.output_modules[module]["is_map"]:
+                            parsed = self._parse_data_outputs(data)
+                        else:
+                            parsed = self._parse_data_deltas(data)
+                        if len(parsed) > 0:
+                            stream_callback(module_name, parsed)
+            except Exception as e:
+                return {"error": e}
+            return
+        elif return_first_result is True:
+            # This logic indexes all blocks until the first block that data is received
+            # Ideal for live streaming events and receiveing them on the front end 
+            module_name = ""
+            parsed = None
+            data_block = 0
+            try:
+                for response in stream:
+                    data = MessageToDict(response.data)
+                    progress = MessageToDict(response.progress)
+                    if data:
+                        data_block = data["clock"]["number"]
+                        module_name: str = data["outputs"][0]["name"]
+                        if self.output_modules[module]["is_map"]:
+                            parsed = self._parse_data_outputs(data)
+                        else:
+                            parsed = self._parse_data_deltas(data)
+                        module_name: str = data["outputs"][0]["name"]
+                        if len(parsed) > 0:
+                            break
+                    elif progress and return_progress is True:
+                        endBlock = int(progress["modules"][0]['processedRanges']['processedRanges'][0]['endBlock'])
+                        data_block = endBlock
+                        if endBlock > highest_processed_block + 100 and progress["modules"][0]['name'] == output_modules[0]:
+                            return {"block": int(endBlock)}
+                return {"data": parsed, "module_name": module_name, "data_block": data_block}
+            except Exception as e:
+                return {"error": e}
+        else:
+            # This logic indexes all blocks from start_block until end_block
+            # Returns one single dataframe with all data in rows once all blocks have been indexed
+            try:
+                for response in stream:
+                    snapshot = MessageToDict(response.snapshot_data)
+                    data = MessageToDict(response.data)
+                    if snapshot:
+                        module_name: str = snapshot["moduleName"]
+                        snapshot_deltas = self._parse_snapshot_deltas(snapshot)
+                        raw_results[module_name]["snapshots"].extend(snapshot_deltas)
+                    if data:
+                        if self.output_modules[module]["is_map"]:
+                            parsed = self._parse_data_outputs(data)
+                        else:
+                            parsed = self._parse_data_deltas(data)
+                        module_name: str = data["outputs"][0]["name"]
+                        raw_results[module_name]["data"].extend(parsed)
+                for output_module in output_modules:
+                    result = SubstreamOutput(module_name=output_module)
+                    data_dict: dict = raw_results.get(output_module)
+                    for k, v in data_dict.items():
+                        df = pd.DataFrame(v)
+                        df["output_module"] = output_module
+                        setattr(result, k, df)
+                    results.append(result)
+            except Exception as e:
+                results.append({"error": e})
+            return results
+  
