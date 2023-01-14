@@ -16,7 +16,7 @@ pip3 install substreams
 
 3. Retrieve the relevant `.spkg` file
     - Can retrieve officially released `.spkg` files from the instructions [here](https://github.com/streamingfast/substreams-playground/releases)
-        - Alternatively, can refer to the official StreamingFast [README](https://github.com/streamingfast/substreams-playground/tree/master/consumers/python) or generate a Messari `.spkg` from these [build instructions](https://github.com/messari/substreams/tree/master/uniswap-v2)
+        - Alternatively, can refer to the official StreamingFast [README](https://github.com/streamingfast/substreams-playground/tree/master/consumers/python) or generate a Messari `.spkg` from these [build instructions](https://substreams.streamingfast.io/reference-and-specs/packages)
 
 
 ## Instructions
