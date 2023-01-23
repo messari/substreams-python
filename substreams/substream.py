@@ -126,25 +126,12 @@ class Substream:
             for x in snapshot["deltas"].get("deltas", list())
         ]
 
-    def _parse_data_deltas(self, data: dict) -> list[dict]:
-        module_name: str = data["outputs"][0]["name"]
-        obj_class = self._class_from_module(module_name)
-        deltas = list()
-        for output in data["outputs"]:
-            store_deltas = output["storeDeltas"]
-            if store_deltas:
-                raw_deltas = store_deltas["deltas"]
-                for delta in raw_deltas:
-                    raw = delta["newValue"]
-                    key = delta["key"]
-                    d = self._parse_from_string(raw, key, obj_class)
-                    d.update(data["clock"])
-                    deltas.append(d)
-        return deltas
-
-    def _parse_data_outputs(self, data: dict) -> list[dict]:
+    def _parse_data_outputs(self, data: dict, module_names: list[str]) -> list[dict]:
         outputs = list()
+        module_set = set(module_names)
         for output in data["outputs"]:
+            if "mapOutput" not in output or output["name"] not in module_set:
+                continue
             map_output = output["mapOutput"]
             for key, items in map_output.items():
                 if key == "items":
@@ -157,11 +144,8 @@ class Substream:
         module_map = {}
         for module in self.pkg.modules.ListFields()[0][1]:
             map_output_type = module.kind_map.output_type
-            store_output_type = module.kind_store.value_type
             if map_output_type != "":
                 output_type = map_output_type
-            else:
-                output_type = store_output_type
 
             module_map[module.name] = {
                 "is_map": map_output_type != "",
@@ -183,17 +167,18 @@ class Substream:
         output_modules: list[str],
         start_block: int,
         end_block: int,
-        stream_callback=None,
-        return_first_result=False,
-        initial_snapshot=False,
+        stream_callback: Optional[callable] = None,
+        return_first_result: bool = False,
+        initial_snapshot: bool = False,
         highest_processed_block: int = 0,
-        return_progress=False
+        return_progress: bool = False,
     ):
         from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
-
         for module in output_modules:
             if module not in self.output_modules:
                 raise Exception(f"module '{module}' is not supported for {self.name}")
+            if self.output_modules[module].get('is_map') is False:
+                raise Exception(f"module '{module}' is not a map module")
             self._class_from_module(module)
 
         stream = self.service.Blocks(
@@ -211,30 +196,39 @@ class Substream:
         raw_results = defaultdict(lambda: {"data": list(), "snapshots": list()})
         results = []
         data_block = 0
-        module_name: str = ""
+        module_name = ""
+
         try:
             for response in stream:
                 snapshot = MessageToDict(response.snapshot_data)
                 data = MessageToDict(response.data)
                 progress = MessageToDict(response.progress)
+                session = MessageToDict(response.session)
+
+                if session:
+                    continue
+
                 if snapshot:
                     module_name = snapshot["moduleName"]
                     snapshot_deltas = self._parse_snapshot_deltas(snapshot)
                     raw_results[module_name]["snapshots"].extend(snapshot_deltas)
+
                 if data:
-                    if self.output_modules[module]["is_map"]:
-                        parsed = self._parse_data_outputs(data)
-                    else:
-                        parsed = self._parse_data_deltas(data)
+                    parsed = self._parse_data_outputs(data, output_modules)
                     module_name = data["outputs"][0]["name"]
                     raw_results[module_name]["data"].extend(parsed)
                     data_block = data["clock"]["number"]
                     if len(parsed) > 0:
+                        parsed = [dict(item, **{'block':data_block}) for item in parsed]
                         if return_first_result is True:
                             break
                         if callable(stream_callback):
                             stream_callback(module_name, parsed)
+                    else:
+                        continue
                 elif progress and return_progress is True:
+                    if 'processedBytes' in progress["modules"][0] or 'processedRanges' not in progress["modules"][0]:
+                        continue
                     endBlock = int(progress["modules"][0]['processedRanges']['processedRanges'][0]['endBlock'])
                     data_block = endBlock
                     if endBlock > highest_processed_block + 100 and progress["modules"][0]['name'] == output_modules[0]:
@@ -249,6 +243,6 @@ class Substream:
                     df["output_module"] = output_module
                     setattr(result, k, df)
                 results.append(result)
-        except Exception as e:
-            results.append({"error": e})
+        except Exception as err:
+            results = {"error": err}
         return results
