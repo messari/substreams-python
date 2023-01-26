@@ -170,8 +170,7 @@ class Substream:
         stream_callback: Optional[callable] = None,
         return_first_result: bool = False,
         initial_snapshot: bool = False,
-        highest_processed_block: int = 0,
-        return_progress: bool = False,
+        return_type: str = "df"
     ):
         from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
         for module in output_modules:
@@ -202,7 +201,6 @@ class Substream:
             for response in stream:
                 snapshot = MessageToDict(response.snapshot_data)
                 data = MessageToDict(response.data)
-                progress = MessageToDict(response.progress)
                 session = MessageToDict(response.session)
 
                 if session:
@@ -226,15 +224,13 @@ class Substream:
                             stream_callback(module_name, parsed)
                     else:
                         continue
-                elif progress and return_progress is True:
-                    if 'processedBytes' in progress["modules"][0] or 'processedRanges' not in progress["modules"][0]:
-                        continue
-                    endBlock = int(progress["modules"][0]['processedRanges']['processedRanges'][0]['endBlock'])
-                    data_block = endBlock
-                    if endBlock > highest_processed_block + 100 and progress["modules"][0]['name'] == output_modules[0]:
-                        return {"block": int(endBlock)}
+            
+            # Want to refactir the below logic to create a singlepoint of return and provide more consistency
             if return_first_result is True:
-                return {"data": parsed, "module_name": module_name, "data_block": data_block}
+                if return_type == "dict":
+                    return {"data": parsed, "module_name": module_name, "data_block": data_block}
+                elif return_type == "df":
+                    return pd.DataFrame(parsed)
             for output_module in output_modules:
                 result = SubstreamOutput(module_name=output_module)
                 data_dict: dict = raw_results.get(output_module)
@@ -243,6 +239,8 @@ class Substream:
                     df["output_module"] = output_module
                     setattr(result, k, df)
                 results.append(result)
+            if return_type == "dict":
+                results = results.to_dict()
         except Exception as err:
             results = {"error": err}
         return results
