@@ -16,7 +16,6 @@ from importlib import import_module
 
 DEFAULT_ENDPOINT = "api.streamingfast.io:443"
 
-
 def retrieve_class(module_name: str, class_name: str):
     module = import_module(module_name)
     return getattr(module, class_name)
@@ -172,32 +171,40 @@ class Substream:
         initial_snapshot: bool = False,
         return_type: str = "df"
     ):
-        from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
-        for module in output_modules:
-            if module not in self.output_modules:
-                raise Exception(f"module '{module}' is not supported for {self.name}")
-            if self.output_modules[module].get('is_map') is False:
-                raise Exception(f"module '{module}' is not a map module")
-            self._class_from_module(module)
 
-        stream = self.service.Blocks(
-            Request(
-                start_block_num=start_block,
-                stop_block_num=end_block,
-                fork_steps=[STEP_IRREVERSIBLE],
-                modules=self.pkg.modules,
-                output_modules=output_modules,
-                initial_store_snapshot_for_modules=output_modules
-                if initial_snapshot
-                else None,
-            )
-        )
-        raw_results = defaultdict(lambda: {"data": list(), "snapshots": list()})
-        results = []
-        data_block = 0
         module_name = ""
+        has_error = False
+        return_dict_interface = {"data": [], "module_name": module_name, "data_block": start_block, "error": None}
+        valid_return_types = ["dict", "df"]
+        results = []
+        raw_results = defaultdict(lambda: {"data": list(), "snapshots": list()})
 
         try:
+            return_type = return_type.lower()
+            if return_type not in valid_return_types:
+                return_type = "df"
+
+            from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
+            for module in output_modules:
+                if module not in self.output_modules:
+                    raise Exception(f"module '{module}' is not supported for {self.name}")
+                if self.output_modules[module].get('is_map') is False:
+                    raise Exception(f"module '{module}' is not a map module")
+                self._class_from_module(module)
+
+            stream = self.service.Blocks(
+                Request(
+                    start_block_num=start_block,
+                    stop_block_num=end_block,
+                    fork_steps=[STEP_IRREVERSIBLE],
+                    modules=self.pkg.modules,
+                    output_modules=output_modules,
+                    initial_store_snapshot_for_modules=output_modules
+                    if initial_snapshot
+                    else None,
+                )
+            )
+
             for response in stream:
                 snapshot = MessageToDict(response.snapshot_data)
                 data = MessageToDict(response.data)
@@ -215,32 +222,35 @@ class Substream:
                     parsed = self._parse_data_outputs(data, output_modules)
                     module_name = data["outputs"][0]["name"]
                     raw_results[module_name]["data"].extend(parsed)
-                    data_block = data["clock"]["number"]
+                    return_dict_interface["data_block"] = data["clock"]["number"]
                     if len(parsed) > 0:
-                        parsed = [dict(item, **{'block':data_block}) for item in parsed]
+                        parsed = [dict(item, **{'block':data["clock"]["number"]}) for item in parsed]
                         if return_first_result is True:
                             break
                         if callable(stream_callback):
                             stream_callback(module_name, parsed)
-                    else:
-                        continue
-            
-            # Want to refactir the below logic to create a singlepoint of return and provide more consistency
-            if return_first_result is True:
+
+            if return_first_result is True and parsed:
+                return_dict_interface["data"] = parsed
                 if return_type == "dict":
-                    return {"data": parsed, "module_name": module_name, "data_block": data_block}
-                elif return_type == "df":
-                    return pd.DataFrame(parsed)
-            for output_module in output_modules:
-                result = SubstreamOutput(module_name=output_module)
-                data_dict: dict = raw_results.get(output_module)
+                    results = return_dict_interface
+                if return_type == "df":
+                    results = pd.DataFrame(parsed)
+            elif raw_results:
+                result = SubstreamOutput(module_name=output_modules[0])
+                data_dict: dict = raw_results.get(output_modules[0])
                 for k, v in data_dict.items():
                     df = pd.DataFrame(v)
-                    df["output_module"] = output_module
+                    df["output_module"] = output_modules[0]
                     setattr(result, k, df)
                 results.append(result)
-            if return_type == "dict":
-                results = results.to_dict()
+                if return_type == "dict":
+                    return_dict_interface["data"] = results.to_dict()
+                    results = return_dict_interface
+            else:
+                raise Exception("No Valid Data Results Returned by Substream")
         except Exception as err:
-            results = {"error": err}
+            has_error = True
+            return_dict_interface["error"] = err
+            results = return_dict_interface
         return results
