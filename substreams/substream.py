@@ -125,11 +125,10 @@ class Substream:
             for x in snapshot["deltas"].get("deltas", list())
         ]
 
-    def _parse_data_outputs(self, data: dict, module_names: list[str]) -> list[dict]:
+    def _parse_data_outputs(self, data: dict, module_name: str) -> list[dict]:
         outputs = list()
-        module_set = set(module_names)
         for output in data["outputs"]:
-            if "mapOutput" not in output or output["name"] not in module_set:
+            if "mapOutput" not in output or output["name"] != module_name:
                 continue
             map_output = output["mapOutput"]
             for key, items in map_output.items():
@@ -163,34 +162,32 @@ class Substream:
 
     def poll(
         self,
-        output_modules: list[str],
+        output_module: str,
         start_block: int,
         end_block: int,
-        stream_callback: Optional[callable] = None,
         return_first_result: bool = False,
         initial_snapshot: bool = False,
         return_type: str = "df"
     ):
 
-        module_name = ""
-        has_error = False
-        return_dict_interface = {"data": [], "module_name": module_name, "data_block": start_block, "error": None}
+        return_dict_interface = {"data": [], "module_name": output_module, "data_block": str(start_block), "error": None}
         valid_return_types = ["dict", "df"]
         results = []
         raw_results = defaultdict(lambda: {"data": list(), "snapshots": list()})
 
         try:
+            if isinstance(output_module, str) is False:
+                raise Exception("The 'output_module' parameter passed into the poll() function is not a string.")
             return_type = return_type.lower()
             if return_type not in valid_return_types:
                 return_type = "df"
 
             from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
-            for module in output_modules:
-                if module not in self.output_modules:
-                    raise Exception(f"module '{module}' is not supported for {self.name}")
-                if self.output_modules[module].get('is_map') is False:
-                    raise Exception(f"module '{module}' is not a map module")
-                self._class_from_module(module)
+            if output_module not in self.output_modules:
+                raise Exception(f"module '{output_module}' is not supported for {self.name}")
+            if self.output_modules[output_module].get('is_map') is False:
+                raise Exception(f"module '{output_module}' is not a map module")
+            self._class_from_module(output_module)
 
             stream = self.service.Blocks(
                 Request(
@@ -198,8 +195,8 @@ class Substream:
                     stop_block_num=end_block,
                     fork_steps=[STEP_IRREVERSIBLE],
                     modules=self.pkg.modules,
-                    output_modules=output_modules,
-                    initial_store_snapshot_for_modules=output_modules
+                    output_modules=[output_module],
+                    initial_store_snapshot_for_modules=[output_module]
                     if initial_snapshot
                     else None,
                 )
@@ -214,21 +211,19 @@ class Substream:
                     continue
 
                 if snapshot:
-                    module_name = snapshot["moduleName"]
                     snapshot_deltas = self._parse_snapshot_deltas(snapshot)
-                    raw_results[module_name]["snapshots"].extend(snapshot_deltas)
+                    raw_results[output_module]["snapshots"].extend(snapshot_deltas)
 
                 if data:
-                    parsed = self._parse_data_outputs(data, output_modules)
-                    module_name = data["outputs"][0]["name"]
-                    raw_results[module_name]["data"].extend(parsed)
+                    parsed = self._parse_data_outputs(data, output_module)
+                    raw_results[output_module]["data"].extend(parsed)
                     return_dict_interface["data_block"] = data["clock"]["number"]
                     if len(parsed) > 0:
                         parsed = [dict(item, **{'block':data["clock"]["number"]}) for item in parsed]
                         if return_first_result is True:
                             break
-                        if callable(stream_callback):
-                            stream_callback(module_name, parsed)
+                    elif int(return_dict_interface["data_block"]) + 1 == end_block:
+                        results = return_dict_interface
 
             if return_first_result is True and parsed:
                 return_dict_interface["data"] = parsed
@@ -236,21 +231,21 @@ class Substream:
                     results = return_dict_interface
                 if return_type == "df":
                     results = pd.DataFrame(parsed)
-            elif raw_results:
-                result = SubstreamOutput(module_name=output_modules[0])
-                data_dict: dict = raw_results.get(output_modules[0])
+            if return_first_result is False and raw_results:
+                result = SubstreamOutput(module_name=output_module)
+                data_dict: dict = raw_results.get(output_module)
                 for k, v in data_dict.items():
                     df = pd.DataFrame(v)
-                    df["output_module"] = output_modules[0]
+                    df["output_module"] = output_module
                     setattr(result, k, df)
                 results.append(result)
                 if return_type == "dict":
                     return_dict_interface["data"] = results.to_dict()
                     results = return_dict_interface
-            else:
-                raise Exception("No Valid Data Results Returned by Substream")
         except Exception as err:
-            has_error = True
-            return_dict_interface["error"] = err
+            error_to_pass = err
+            if isinstance(err, Exception):
+                error_to_pass = str(err)
+            return_dict_interface["error"] = error_to_pass
             results = return_dict_interface
         return results
