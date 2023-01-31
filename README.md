@@ -39,7 +39,7 @@ In order to poll the substream, you will need to call the `poll()` function on t
 print(sb.output_modules)
 
 # Poll the module and return a list of SubstreamOutput objects in the order of the specified modules
-result = sb.poll(["map_swap_events"], start_block=10000835, end_block=10000835+20000)
+result = sb.poll("map_swap_events", start_block=10000835, end_block=10000835+20000)
 ```
 
 With the default inputs, this function outputs Pandas Dataframes after streaming all blocks between the start_block and end_block. However depending on how this function is called, a dict object is returned. The `poll()` function has a number of inputs
