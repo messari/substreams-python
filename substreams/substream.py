@@ -16,7 +16,6 @@ from importlib import import_module
 
 DEFAULT_ENDPOINT = "api.streamingfast.io:443"
 
-
 def retrieve_class(module_name: str, class_name: str):
     module = import_module(module_name)
     return getattr(module, class_name)
@@ -126,11 +125,10 @@ class Substream:
             for x in snapshot["deltas"].get("deltas", list())
         ]
 
-    def _parse_data_outputs(self, data: dict, module_names: list[str]) -> list[dict]:
+    def _parse_data_outputs(self, data: dict, module_name: str) -> list[dict]:
         outputs = list()
-        module_set = set(module_names)
         for output in data["outputs"]:
-            if "mapOutput" not in output or output["name"] not in module_set:
+            if "mapOutput" not in output or output["name"] != module_name:
                 continue
             map_output = output["mapOutput"]
             for key, items in map_output.items():
@@ -164,78 +162,76 @@ class Substream:
 
     def poll(
         self,
-        output_modules: list[str],
+        output_module: str,
         start_block: int,
         end_block: int,
-        stream_callback: Optional[callable] = None,
         return_first_result: bool = False,
         initial_snapshot: bool = False,
-        highest_processed_block: int = 0,
-        return_progress: bool = False,
+        return_type: str = "df"
     ):
-        from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
-        for module in output_modules:
-            if module not in self.output_modules:
-                raise Exception(f"module '{module}' is not supported for {self.name}")
-            if self.output_modules[module].get('is_map') is False:
-                raise Exception(f"module '{module}' is not a map module")
-            self._class_from_module(module)
 
-        stream = self.service.Blocks(
-            Request(
-                start_block_num=start_block,
-                stop_block_num=end_block,
-                fork_steps=[STEP_IRREVERSIBLE],
-                modules=self.pkg.modules,
-                output_modules=output_modules,
-                initial_store_snapshot_for_modules=output_modules
-                if initial_snapshot
-                else None,
-            )
-        )
-        raw_results = defaultdict(lambda: {"data": list(), "snapshots": list()})
+        return_dict_interface = {"data": [], "module_name": output_module, "data_block": str(start_block), "error": None}
+        valid_return_types = ["dict", "df"]
         results = []
-        data_block = 0
-        module_name = ""
+        raw_results = defaultdict(lambda: {"data": list(), "snapshots": list()})
 
         try:
+            if isinstance(output_module, str) is False:
+                raise Exception("The 'output_module' parameter passed into the poll() function is not a string.")
+            return_type = return_type.lower()
+            if return_type not in valid_return_types:
+                return_type = "df"
+
+            from sf.substreams.v1.substreams_pb2 import STEP_IRREVERSIBLE, Request
+            if output_module not in self.output_modules:
+                raise Exception(f"module '{output_module}' is not supported for {self.name}")
+            if self.output_modules[output_module].get('is_map') is False:
+                raise Exception(f"module '{output_module}' is not a map module")
+            self._class_from_module(output_module)
+
+            stream = self.service.Blocks(
+                Request(
+                    start_block_num=start_block,
+                    stop_block_num=end_block,
+                    fork_steps=[STEP_IRREVERSIBLE],
+                    modules=self.pkg.modules,
+                    output_modules=[output_module],
+                    initial_store_snapshot_for_modules=[output_module]
+                    if initial_snapshot
+                    else None,
+                )
+            )
+
             for response in stream:
                 snapshot = MessageToDict(response.snapshot_data)
                 data = MessageToDict(response.data)
-                progress = MessageToDict(response.progress)
                 session = MessageToDict(response.session)
 
                 if session:
                     continue
 
                 if snapshot:
-                    module_name = snapshot["moduleName"]
                     snapshot_deltas = self._parse_snapshot_deltas(snapshot)
-                    raw_results[module_name]["snapshots"].extend(snapshot_deltas)
+                    raw_results[output_module]["snapshots"].extend(snapshot_deltas)
 
                 if data:
-                    parsed = self._parse_data_outputs(data, output_modules)
-                    module_name = data["outputs"][0]["name"]
-                    raw_results[module_name]["data"].extend(parsed)
-                    data_block = data["clock"]["number"]
+                    parsed = self._parse_data_outputs(data, output_module)
+                    raw_results[output_module]["data"].extend(parsed)
+                    return_dict_interface["data_block"] = data["clock"]["number"]
                     if len(parsed) > 0:
-                        parsed = [dict(item, **{'block':data_block}) for item in parsed]
+                        parsed = [dict(item, **{'block':data["clock"]["number"]}) for item in parsed]
                         if return_first_result is True:
                             break
-                        if callable(stream_callback):
-                            stream_callback(module_name, parsed)
-                    else:
-                        continue
-                elif progress and return_progress is True:
-                    if 'processedBytes' in progress["modules"][0] or 'processedRanges' not in progress["modules"][0]:
-                        continue
-                    endBlock = int(progress["modules"][0]['processedRanges']['processedRanges'][0]['endBlock'])
-                    data_block = endBlock
-                    if endBlock > highest_processed_block + 100 and progress["modules"][0]['name'] == output_modules[0]:
-                        return {"block": int(endBlock)}
-            if return_first_result is True:
-                return {"data": parsed, "module_name": module_name, "data_block": data_block}
-            for output_module in output_modules:
+                    elif int(return_dict_interface["data_block"]) + 1 == end_block:
+                        results = return_dict_interface
+
+            if return_first_result is True and parsed:
+                return_dict_interface["data"] = parsed
+                if return_type == "dict":
+                    results = return_dict_interface
+                if return_type == "df":
+                    results = pd.DataFrame(parsed)
+            if return_first_result is False and raw_results:
                 result = SubstreamOutput(module_name=output_module)
                 data_dict: dict = raw_results.get(output_module)
                 for k, v in data_dict.items():
@@ -243,6 +239,13 @@ class Substream:
                     df["output_module"] = output_module
                     setattr(result, k, df)
                 results.append(result)
+                if return_type == "dict":
+                    return_dict_interface["data"] = results.to_dict()
+                    results = return_dict_interface
         except Exception as err:
-            results = {"error": err}
+            error_to_pass = err
+            if isinstance(err, Exception):
+                error_to_pass = str(err)
+            return_dict_interface["error"] = error_to_pass
+            results = return_dict_interface
         return results
