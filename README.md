@@ -56,10 +56,16 @@ With the default inputs, this function outputs Pandas Dataframes after streaming
     - Defaults to False
 - initial_snapshot
     - Boolean value, defaults to False
+- return_first_result_function
+    - Custom filtering function that accepts parsed data passed as an argument and returns as either True or False
+    - Gets called when return_first_result is True and a block has applicable events/txs
+    - If function resolves to True, the polling function returns the data from the block
+    - If function resolves to False, the polling function continues iteration
 - return_type
     - Specifies the type of value to return
     - Passing "df" returns the data in a pandas DataFrame
     - Passing "dict" returns in the format {"data": [], "module_name": String, "data_block": int, error: str | None}
+    - Passing "csv" returns in the format {"data": String(CSV), "module_name": String, "data_block": int, error: str | None}
 
 The result here is the default `SubstreamOutput` object, you can access both the `data` and `snapshots` dataframes by doing:
 
