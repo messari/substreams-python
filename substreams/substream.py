@@ -166,12 +166,13 @@ class Substream:
         start_block: int,
         end_block: int,
         return_first_result: bool = False,
+        return_first_result_function: Optional[callable] = None,
         initial_snapshot: bool = False,
         return_type: str = "df"
     ):
 
         return_dict_interface = {"data": [], "module_name": output_module, "data_block": str(start_block), "error": None}
-        valid_return_types = ["dict", "df"]
+        valid_return_types = ["dict", "df", "csv"]
         results = []
         raw_results = defaultdict(lambda: {"data": list(), "snapshots": list()})
 
@@ -221,16 +222,25 @@ class Substream:
                     if len(parsed) > 0:
                         parsed = [dict(item, **{'block':data["clock"]["number"]}) for item in parsed]
                         if return_first_result is True:
-                            break
+                            if callable(return_first_result_function):
+                                func_result = return_first_result_function(parsed)
+                                if func_result is True:
+                                    break
+                                else:
+                                    continue
+                            else:
+                                break
                     elif int(return_dict_interface["data_block"]) + 1 == end_block:
                         results = return_dict_interface
 
             if return_first_result is True and parsed:
-                return_dict_interface["data"] = parsed
                 if return_type == "dict":
-                    results = return_dict_interface
+                    return_dict_interface["data"] = parsed
                 if return_type == "df":
-                    results = pd.DataFrame(parsed)
+                    return_dict_interface["data"] = pd.DataFrame(parsed)
+                if return_type == "csv":
+                    return_dict_interface["data"] = pd.DataFrame(parsed).to_csv(index=False)
+                results = return_dict_interface
             if return_first_result is False and raw_results:
                 result = SubstreamOutput(module_name=output_module)
                 data_dict: dict = raw_results.get(output_module)
@@ -241,6 +251,9 @@ class Substream:
                 results.append(result)
                 if return_type == "dict":
                     return_dict_interface["data"] = results.to_dict()
+                    results = return_dict_interface
+                if return_type == "csv":
+                    return_dict_interface["data"] = results.to_csv(index=False)
                     results = return_dict_interface
         except Exception as err:
             error_to_pass = err
