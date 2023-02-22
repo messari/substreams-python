@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "substreams"
-version = "0.0.7"
+version = "0.0.8"
 authors = [
   { name="Ryan Sudhakaran", email="ryan.sudhakaran@messari.io" },
   { name="Michael Carroll", email="michaelcarroll1999@gmail.com" },
